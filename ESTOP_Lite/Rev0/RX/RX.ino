@@ -64,6 +64,7 @@ uint8_t error = 0;
 uint8_t remote_count = 0;
 uint8_t warning = 0;
 int     warning_timer = 0;
+static uint8_t prev_serial_status = 0xFF; // last reported status over serial
 
 
 uint8_t get_swtich_status(uint8_t SSTOP, uint8_t ESTOP){
@@ -104,6 +105,12 @@ static void remote_status_filter(){
   }
 }
 
+static void serial_report_status(){
+  if(local_status != prev_serial_status && Serial.availableForWrite()){
+    Serial.write(&local_status, 1);
+    prev_serial_status = local_status;
+  }
+}
 
 void setup() {
     //初始化spi0
@@ -302,11 +309,12 @@ void loop() {
 
   // take action
   if(local_status & 0b00000010){
-    gpio_put(PIN_SSTOP_OUT, 1);    
+    gpio_put(PIN_SSTOP_OUT, 1);
   }
   else{
     gpio_put(PIN_SSTOP_OUT, 0);
   }
+  serial_report_status();
 //  Serial.println("    ");
 //  Serial.println("    ");
 }
