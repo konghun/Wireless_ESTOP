@@ -219,39 +219,40 @@ void loop() {
   int t = micros();
   bool ot = false;
   error = 0;
-  
+
   // Write ACK_Payload
   ackbuf[0] = local_status;
-  reg_write(spi0, W_ACK_PAYLOAD+0b000, ackbuf, 1);
+  reg_write(spi0, W_ACK_PAYLOAD + 0b000, ackbuf, 1);
 
   // Monitor IRQ
   uint8_t RX_DR_IRQ = gpio_get(PIN_IRQ);
-  uint8_t rx_full = 0; 
+  uint8_t rx_full = 0;
 
-  while(RX_DR_IRQ){
+  while (RX_DR_IRQ) {
     // IRQ is low when RX_DR is set to 1
-    reg_read(spi0, R_REGISTER+FIFO_STATUS, rxbuf, 2);
+    reg_read(spi0, R_REGISTER + FIFO_STATUS, rxbuf, 2);
     // Check if RX full
     rx_full = rxbuf[1] & 0b00000010;
-    if(rx_full){
+    if (rx_full) {
       // RX full but no new data
-      write_register(FLUSH_RX,0xFF);
+      write_register(FLUSH_RX, 0xFF);
     }
     // Check if RX_DR
-    if(rxbuf[0] & 0b01000000){
+    if (rxbuf[0] & 0b01000000) {
       // RX_DR noticed
       break;
     }
     delayMicroseconds(10);
     RX_DR_IRQ = gpio_get(PIN_IRQ);
-    if(micros()-t>loop_time){
-      ot = true; 
+    if (micros() - t > loop_time) {
+      ot = true;
       error = 1;
       break;
     }
   }
+
   // Out of loop
-  if(!ot){
+  if (!ot) {
     // RX_DR pulled low or RX_DR noticed
     // No overtime
 //  Serial.println("Got data.");
@@ -271,50 +272,64 @@ void loop() {
 
     // Now we are looking for TX_DS
     uint8_t TX_DS_bit = rxbuf[0] & 0b00100000;
-    while(!TX_DS_bit){
+    while (!TX_DS_bit) {
       delayMicroseconds(10);
       reg_read(spi0, 0xFF, rxbuf, 1);
       TX_DS_bit = rxbuf[0] & 0b00100000;
-      if(micros()-t>loop_time){
-        ot = true; 
+      if (micros() - t > loop_time) {
+        ot = true;
         break;
       }
     }
   }
+
   // Out of loop
   // TX_DS noticed or overtime
-  if(ot){
-    // Overtime
-    // Only take local switch status
+  if (ot) {
+    // Overtime, reset status
     error = 1;
     remote_status = 0b00000000;
   }
 
-  write_register(W_REGISTER+NRF_STATUS, rxbuf[0]);
-  write_register(FLUSH_TX,0xFF);
-  write_register(FLUSH_RX,0xFF);
+  write_register(W_REGISTER + NRF_STATUS, rxbuf[0]);
+  write_register(FLUSH_TX, 0xFF);
+  write_register(FLUSH_RX, 0xFF);
 
-  // We don't have ESTOP on remote so remove:
-  remote_status = remote_status & 0b00000010;
+  // We don't have ESTOP on remote, so remove it
+  remote_status = remote_status & 0b00000010;  // Keep only SSTOP signal
 
+  // Get switch status for local SSTOP and ESTOP
   switch_status = get_swtich_status(PIN_SSTOP_IN, PIN_STOP_IN);
+  
+  // Apply remote status filter
   remote_status_filter();
-  local_status = switch_status | remote_status | (error<<2);
-  //  update error display
-  gpio_put(PIN_STATUS,error);
-  warning_blink();
-  //  update stop display
-  gpio_put(PIN_STOP_LED, (local_status & 0b00000001));
-  gpio_put(PIN_SSTOP_LED, (local_status & 0b00000010));  
 
-  // take action
-  if(local_status & 0b00000010){
-    gpio_put(PIN_SSTOP_OUT, 1);
+  // Update local status (SSTOP signal and error status)
+  local_status = switch_status | remote_status | (error << 2);
+
+  // Update error display
+  gpio_put(PIN_STATUS, error);
+
+  // Warning blink control
+  warning_blink();
+
+  // Update the STOP display
+  gpio_put(PIN_STOP_LED, (local_status & 0b00000001));
+  gpio_put(PIN_SSTOP_LED, (local_status & 0b00000010));
+
+  // Take action based on the local status
+  if (local_status & 0b00000010) {
+    gpio_put(PIN_SSTOP_OUT, 1);  // Activate SSTOP output (soft stop)
+  } else {
+    gpio_put(PIN_SSTOP_OUT, 0);  // Deactivate SSTOP output
   }
-  else{
-    gpio_put(PIN_SSTOP_OUT, 0);
-  }
+
+  // Report the current status over serial if it has changed
   serial_report_status();
 //  Serial.println("    ");
 //  Serial.println("    ");
+  // Handle overtime and regular delay for loop time control
+  if (micros() - t < loop_time) {
+    delayMicroseconds(loop_time - (micros() - t));  // Maintain control cycle time
+  }
 }
